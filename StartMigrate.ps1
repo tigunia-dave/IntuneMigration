@@ -15,11 +15,66 @@ $ErrorActionPreference = 'SilentlyContinue'
 #### STEP 1: LOCAL FILES AND LOGGING ####
 <# =================================================================================================#>
 
+function Logit {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]$Message,
+        [Parameter(Mandatory = $true)]
+        [string]$LogName,
+        [Parameter(Mandatory = $false)]
+        [ValidateSet("Information", "Warning", "Error")]
+        [string]$Severity = "Information",
+        [Parameter(Mandatory = $false)]
+        [switch]$Stdout
+    )
+
+    if (-not $PSBoundParameters.ContainsKey('Stdout')) {
+        $Stdout = $true
+    }
+
+    $Log = @{
+        time        = (Get-Date -Format "yyyy-MM-ddTHH:mm:sszzz")
+        hostname    = $env:COMPUTERNAME
+        application = $logname
+        message     = $Message.ToString()
+        level       = $Severity
+    } | ConvertTo-Json -Compress
+    $Sanitized = $LogName -Replace " ", "_"
+    $FileName = (Get-Date -Format yyyy-MM-dd) + "-$($Sanitized).log"
+    if (!(Test-Path "C:\Logs")) { new-item "C:\Logs" -ItemType Directory | Out-Null }
+    $Log | Out-File -Append "C:\Logs\$($FileName)" -Encoding ascii
+    If ($Stdout) {
+        Switch ($Severity) {
+            "Information" { Write-Host $Log }
+            "Warning" { Write-Warning $Log }
+            "Error" { Write-Error $Log }
+        }
+    }
+}
+
+$Log = "IntuneMigration"
+
+# Verify context is 
+try{
+	$(whoami) -like "*SYSTEM"
+} catch{
+	Logit -LogName $log -Message "Not running as System" -Severity Error
+	throw "Not running as System"
+}
+
 #Copy necessary files from intunewin package to local PC
 $resourcePath = "C:\ProgramData\IntuneMigration"
 
 if (!(Test-Path $resourcePath)) {
-	mkdir $resourcePath
+	try {
+		Logit -Message "Creating $($resourcePath)" -LogName $log -Severity Information
+		mkdir $resourcePath
+	}catch{
+		$msg = "Unable to create $($resourcePath) Error: $($_.Exception)"
+		Logit -Message $msg -LogName $log -Severity Error
+		throw $msg
+	}
 }
 
 $packageFiles = @(
@@ -39,21 +94,20 @@ $packageFiles = @(
 )
 
 foreach ($file in $packageFiles) {
-	Copy-Item -Path "$($PSScriptRoot)\$($file)" -Destination "$($resourcePath)" -Force -Verbose
+	try {
+		Logit -LogName $log -Message "Extracting package file: $($file)" -Severity Information
+		Copy-Item -Path "$($PSScriptRoot)\$($file)" -Destination "$($resourcePath)" -Force -Verbose
+	}catch{
+		$msg = "Unable to extract file: $($file). Error: $($_.Exception)"
+		Logit -LogName $log -Message $msg -Severity Error
+		throw $msg
+	}
 }
 
 #Set detection flag for Intune install
 $installFlag = "$($resourcePath)\Installed.txt"
 New-Item $installFlag -Force
 Set-Content -Path $($installFlag) -Value "Package Installed"
-
-#Start logging of script
-Start-Transcript -Path "$($resourcePath)\migration.log" -Verbose
-
-# Verify context is 
-Write-Host "Running as..."
-whoami
-Write-Host ""
 
 
 <# =================================================================================================#>
